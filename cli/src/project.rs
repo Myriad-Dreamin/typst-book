@@ -10,8 +10,10 @@ use crate::{
     error::prelude::*,
     meta::{BookMeta, BookMetaContent, BookMetaElem, BuildMeta},
     render::{DataDict, HtmlRenderer, TypstRenderer},
-    utils::{copy_dir_embedded, create_dirs, release_packages, write_file},
-    CompileArgs,
+    utils::{
+        copy_dir_embedded, create_dirs, make_absolute, release_packages, write_file, UnwrapOrExit,
+    },
+    CompileArgs, MetaSource,
 };
 use include_dir::include_dir;
 
@@ -48,9 +50,11 @@ pub struct Project {
     pub hr: HtmlRenderer,
     pub book_meta: Option<BookMeta>,
     pub build_meta: Option<BuildMeta>,
+    pub chapters: Vec<DataDict>,
 
     pub dest_dir: PathBuf,
     pub path_to_root: String,
+    pub meta_source: MetaSource,
 }
 
 impl Project {
@@ -66,6 +70,23 @@ impl Project {
             args.path_to_root.push('/');
         }
 
+        let meta_source = args.meta_source.clone().unwrap_or(MetaSource::Strict);
+
+        args.dir = make_absolute(Path::new(&args.dir))
+            .to_str()
+            .unwrap()
+            .to_owned();
+
+        let dir = Path::new(&args.dir);
+        let mut entry_file = None;
+        if dir.is_file() {
+            if meta_source == MetaSource::Strict {
+                return Err(error_once!("project dir is a file", dir: dir.display()));
+            }
+            entry_file = Some(dir.to_owned());
+            args.dir = dir.parent().unwrap().to_str().unwrap().to_owned();
+        }
+
         if args.workspace.is_empty() {
             args.workspace = args.dir.clone();
         }
@@ -79,7 +100,9 @@ impl Project {
             hr,
             book_meta: None,
             build_meta: None,
+            chapters: vec![],
             path_to_root,
+            meta_source,
         };
 
         release_packages(
@@ -91,8 +114,6 @@ impl Project {
             proj.tr.compiler.world_mut(),
             include_dir!("$CARGO_MANIFEST_DIR/../contrib/typst/variables"),
         );
-
-        proj.compile_meta()?;
 
         if final_dest_dir.is_empty() {
             if let Some(dest_dir) = proj.build_meta.as_ref().map(|b| b.dest_dir.clone()) {
@@ -106,6 +127,17 @@ impl Project {
 
         proj.tr.fix_dest_dir(Path::new(&final_dest_dir));
         proj.dest_dir = proj.tr.dest_dir.clone();
+
+        match proj.meta_source {
+            MetaSource::Strict => {
+                assert!(entry_file.is_none());
+                proj.compile_meta()?;
+            }
+            MetaSource::Outline => {
+                assert!(entry_file.is_some());
+                proj.infer_meta_by_outline(entry_file.unwrap())?;
+            }
+        }
 
         Ok(proj)
     }
@@ -209,6 +241,33 @@ impl Project {
         Ok(())
     }
 
+    pub fn infer_meta_by_outline(&mut self, entry: PathBuf) -> ZResult<()> {
+        // println!("entry = {:?}, root = {:?}", entry, self.tr.root_dir);
+        let entry = entry.strip_prefix(&self.tr.root_dir).unwrap_or_exit();
+        let doc = self.tr.compile_book(entry)?;
+
+        // let outline = crate::outline::outline(&doc);
+        // println!("outline: {:#?}", outline);
+
+        let chapters = self.tr.compile_pages_by_outline(entry)?;
+        self.chapters = self.generate_chapters(&chapters);
+
+        self.book_meta = Some(BookMeta {
+            title: doc
+                .title
+                .as_ref()
+                .map(|t| t.as_str())
+                .unwrap_or("Typst Document")
+                .to_owned(),
+            authors: doc.author.iter().map(|a| a.as_str().to_owned()).collect(),
+            language: "en".to_owned(),
+            summary: chapters,
+            ..Default::default()
+        });
+
+        Ok(())
+    }
+
     pub fn build(&mut self) -> ZResult<()> {
         let mut write_index = false;
 
@@ -261,7 +320,8 @@ impl Project {
             include_bytes!("../../themes/mdbook/index.js"),
         )?;
 
-        for ch in self.iter_chapters() {
+        self.prepare_chapters();
+        for ch in self.chapters.clone() {
             if let Some(path) = ch.get("path") {
                 let raw_path: String = serde_json::from_value(path.clone())
                     .map_err(error_once_map_string!("retrieve path in book.toml", value: path))?;
@@ -277,8 +337,10 @@ impl Project {
                     write_index = true;
                 }
 
-                // cleanup cache
-                comemo::evict(5);
+                if self.need_compile() {
+                    // cleanup cache
+                    comemo::evict(5);
+                }
             }
         }
 
@@ -345,10 +407,19 @@ impl Project {
         }
     }
 
-    pub fn iter_chapters(&self) -> Vec<DataDict> {
+    pub fn prepare_chapters(&mut self) {
+        match self.meta_source {
+            MetaSource::Strict => {
+                self.chapters = self.generate_chapters(&self.book_meta.as_ref().unwrap().summary)
+            }
+            MetaSource::Outline => {}
+        }
+    }
+
+    pub fn generate_chapters(&self, meta: &[BookMetaElem]) -> Vec<DataDict> {
         let mut chapters = vec![];
 
-        for item in self.book_meta.as_ref().unwrap().summary.iter() {
+        for item in meta.iter() {
             self.iter_chapters_dfs(item, &mut chapters);
         }
 
@@ -364,7 +435,9 @@ impl Project {
             // windows
             .replace('\\', "/");
 
-        self.tr.compile_page(Path::new(path))?;
+        if self.need_compile() {
+            self.tr.compile_page(Path::new(path))?;
+        }
 
         let dynamic_load_trampoline = self
             .hr
@@ -392,7 +465,7 @@ impl Project {
             .map_err(map_string_err("render_chapter,convert_to<BookMeta>"))?;
 
         // inject chapters
-        data.insert("chapters".to_owned(), json!(self.iter_chapters()));
+        data.insert("chapters".to_owned(), json!(self.chapters));
 
         let renderer_module = format!("{}renderer/typst_ts_renderer_bg.wasm", self.path_to_root);
         data.insert("renderer_module".to_owned(), json!(renderer_module));
@@ -409,6 +482,10 @@ impl Project {
         let index_html = self.hr.render_index(data, path);
         log::info!("rendering chapter {} in {:?}", path, instant.elapsed());
         Ok(index_html)
+    }
+
+    fn need_compile(&self) -> bool {
+        matches!(self.meta_source, MetaSource::Strict)
     }
 
     // pub fn auto_order_section(&mut self) {

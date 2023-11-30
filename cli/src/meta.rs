@@ -30,7 +30,7 @@ pub enum BookMetaElem {
 
 /// General information about your book.
 /// Book metadata in summary.typ
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct BookMeta {
     /// The title of the book
     pub title: String,
