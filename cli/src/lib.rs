@@ -1,6 +1,7 @@
 pub mod error;
 pub mod font;
 pub mod meta;
+mod outline;
 pub mod project;
 pub mod render;
 pub mod theme;
@@ -8,9 +9,10 @@ pub mod utils;
 pub mod version;
 use version::VersionFormat;
 
+use core::fmt;
 use std::path::PathBuf;
 
-use clap::{ArgAction, Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
 #[clap(name = "typst-book", version = "0.1.0")]
@@ -43,6 +45,32 @@ pub enum Subcommands {
     Serve(ServeArgs),
 }
 
+/// Determine the approach to retrieving metadata of a book project.
+#[derive(ValueEnum, Debug, Clone, Eq, PartialEq)]
+#[value(rename_all = "kebab-case")]
+pub enum MetaSource {
+    /// Strictly retrieve the project's meta by label queries.
+    /// + retrieve the book meta from `<typst-book-book-meta>`
+    /// + retrieve the build meta from `<typst-book-build-meta>`
+    Strict,
+    /// Infer the project's meta from the outline of main file.
+    /// Note: if the main file also contains `<typst-book-book-meta>` or
+    /// `<typst-book-build-meta>`, the manual-set meta will be used first.
+    Outline,
+}
+
+impl fmt::Display for MetaSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.to_possible_value().unwrap().get_name())
+    }
+}
+
+impl Default for MetaSource {
+    fn default() -> Self {
+        Self::Strict
+    }
+}
+
 #[derive(Default, Debug, Clone, Parser)]
 #[clap(next_help_heading = "Compile options")]
 pub struct CompileArgs {
@@ -50,6 +78,10 @@ pub struct CompileArgs {
     /// (Defaults to the current directory when omitted)
     #[clap(default_value = "")]
     pub dir: String,
+
+    /// Determine the approach to retrieving metadata of the book project.
+    #[clap(long, default_value = "None")]
+    pub meta_source: Option<MetaSource>,
 
     /// Root directory for the typst workspace, which is same as the
     /// `typst-cli`'s root. (Defaults to the root directory for the book
