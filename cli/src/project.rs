@@ -70,7 +70,7 @@ impl Project {
             args.path_to_root.push('/');
         }
 
-        let meta_source = args.meta_source.clone().unwrap_or(MetaSource::Strict);
+        let meta_source = args.meta_source.clone();
 
         args.dir = make_absolute(Path::new(&args.dir))
             .to_str()
@@ -129,7 +129,7 @@ impl Project {
         proj.dest_dir = proj.tr.dest_dir.clone();
 
         match proj.meta_source {
-            MetaSource::Strict => {
+            MetaSource::Auto | MetaSource::Strict => {
                 assert!(entry_file.is_none());
                 proj.compile_meta()?;
             }
@@ -401,7 +401,7 @@ impl Project {
 
     pub fn prepare_chapters(&mut self) {
         match self.meta_source {
-            MetaSource::Strict => {
+            MetaSource::Auto | MetaSource::Strict => {
                 self.chapters = self.generate_chapters(&self.book_meta.as_ref().unwrap().summary)
             }
             MetaSource::Outline => {}

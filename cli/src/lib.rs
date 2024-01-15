@@ -46,9 +46,12 @@ pub enum Subcommands {
 }
 
 /// Determine the approach to retrieving metadata of a book project.
-#[derive(ValueEnum, Debug, Clone, Eq, PartialEq)]
+#[derive(Default, ValueEnum, Debug, Clone, Eq, PartialEq)]
 #[value(rename_all = "kebab-case")]
 pub enum MetaSource {
+    #[default]
+    /// Detect mode automatically.
+    Auto,
     /// Strictly retrieve the project's meta by label queries.
     /// + retrieve the book meta from `<typst-book-book-meta>`
     /// + retrieve the build meta from `<typst-book-build-meta>`
@@ -65,12 +68,6 @@ impl fmt::Display for MetaSource {
     }
 }
 
-impl Default for MetaSource {
-    fn default() -> Self {
-        Self::Strict
-    }
-}
-
 #[derive(Default, Debug, Clone, Parser)]
 #[clap(next_help_heading = "Compile options")]
 pub struct CompileArgs {
@@ -80,8 +77,8 @@ pub struct CompileArgs {
     pub dir: String,
 
     /// Determine the approach to retrieving metadata of the book project.
-    #[clap(long, default_value = "None")]
-    pub meta_source: Option<MetaSource>,
+    #[clap(long, default_value = "auto")]
+    pub meta_source: MetaSource,
 
     /// Root directory for the typst workspace, which is same as the
     /// `typst-cli`'s root. (Defaults to the root directory for the book
