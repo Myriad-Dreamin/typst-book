@@ -50,6 +50,9 @@ warp = { version = "0.3", features = ["compression"] }
 clap = { version = "4.5", features = ["derive", "env", "unicode", "wrap_help"] }
 clap_complete = "4.5"
 clap_complete_fig = "4.5"
+watchexec = "4.1"
+watchexec-events = "3.0"
+watchexec-signals = "3.0"
 
 # logging and tracing
 env_logger = "0.11"

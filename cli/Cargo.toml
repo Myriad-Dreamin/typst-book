@@ -53,6 +53,10 @@ handlebars.workspace = true
 typst-ts-svg-exporter.workspace = true
 pathdiff.workspace = true
 
+watchexec.workspace = true
+watchexec-events.workspace = true
+watchexec-signals.workspace = true
+
 [build-dependencies]
 anyhow.workspace = true
 vergen.workspace = true

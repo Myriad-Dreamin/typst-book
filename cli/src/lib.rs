@@ -107,6 +107,15 @@ pub struct ServeArgs {
     /// Listen address.
     #[clap(long, default_value = "127.0.0.1:25520")]
     pub addr: String,
+
+    /// Watch for changes and rebuild the book automatically.
+    ///
+    /// - If false, no watch.
+    /// - If true, `workspace` is watched.
+    ///
+    /// This option will do nothing if `no_build` is true.
+    #[clap(long)]
+    pub watch: bool,
 }
 
 pub mod build_info {

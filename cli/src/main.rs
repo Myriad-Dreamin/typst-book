@@ -1,6 +1,7 @@
 use std::{net::SocketAddr, path::Path, process::exit};
 
 use clap::{Args, Command, FromArgMatches};
+use log::error;
 use typst_book_cli::{
     error::prelude::*,
     project::Project,
@@ -181,11 +182,11 @@ fn build(args: BuildArgs) -> ZResult<()> {
 }
 
 pub async fn serve(args: ServeArgs) -> ZResult<()> {
-    let mut proj = Project::new(args.compile)?;
+    let proj = std::sync::Mutex::new(Project::new(args.compile.clone())?);
 
     // Build the book if it hasn't been built yet
     if !args.no_build {
-        proj.build()?;
+        proj.lock().expect("Cannot get lock").build()?;
 
         // since we don't need the compilation cache anymore, we can evict it
         comemo::evict(0);
@@ -203,12 +204,54 @@ pub async fn serve(args: ServeArgs) -> ZResult<()> {
 
         let dev = warp::path("dev").and(warp::fs::dir(""));
 
-        dev.or(warp::fs::dir(proj.dest_dir))
-            .with(cors)
-            .with(warp::compression::gzip())
+        dev.or(warp::fs::dir(
+            proj.lock().expect("Cannot get lock").dest_dir.clone(),
+        ))
+        .with(cors)
+        .with(warp::compression::gzip())
     });
 
-    server.run(http_addr).await;
+    // server.run(http_addr).await;
+    tokio::spawn(server.run(http_addr));
+
+    if args.watch && !args.no_build {
+        let wx = watchexec::Watchexec::new(move |mut action| {
+            // Filter out event that means a new build is needed
+            if action.events.iter().any(|event| {
+                event.tags.iter().any(|tag| {
+                    matches!(tag,
+                    watchexec_events::Tag::Path {
+                        path,
+                        file_type: Some(watchexec_events::FileType::File),
+                    } if Some("typ") == path.extension().and_then(|osstr| osstr.to_str()))
+                })
+            }) {
+                proj.lock()
+                    .expect("Cannot get lock")
+                    .build()
+                    .expect("Cannot build the project");
+            }
+
+            if action
+                .signals()
+                .any(|sig| sig == watchexec_signals::Signal::Interrupt)
+            {
+                action.quit();
+            }
+
+            action
+        })
+        .expect("watch feature is not available");
+
+        wx.config.pathset([args.compile.workspace]);
+
+        match wx.main().await {
+            Ok(_) => {}
+            Err(err) => {
+                error!("watch error: {:?}", err);
+            }
+        }
+    }
 
     exit(0);
 }
